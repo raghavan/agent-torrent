@@ -192,10 +192,15 @@ kills B mid-job and confirms A fails gracefully and is refunded.
 If `ANTHROPIC_API_KEY` is set, peer B executes the task **for real**
 through the `api` harness — the test asserts the result is genuine LLM
 output (not the canned simulation) and actually contains a function
-definition. Without a key it falls back to simulated execution, which is
-what CI runs on every PR. Set `AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to
-force simulation even when a key is present. Note the real path spends a
-small amount of API credit per run and executes on your account.
+definition. Without a key it falls back to simulated execution. Set
+`AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to force simulation even when a key
+is present. Note the real path spends a small amount of API credit per
+run and executes on your account.
+
+CI runs both on every PR: the simulated test across Python versions
+(fast, no credentials), and an `acceptance-local-llm` job where peer B
+executes the task on a real local model — llama.cpp serving
+Qwen2.5-0.5B-Instruct on the runner's CPU, no API key involved.
 
 To run the real path against a **local model** instead (zero cost, no
 account), start a llama.cpp server as shown in

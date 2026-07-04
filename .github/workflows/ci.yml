@@ -23,3 +23,51 @@ jobs:
         run: python -m compileall agenttorrent acceptance_test.py
       - name: Run acceptance test (two live peers, delegation, kill + refund)
         run: python acceptance_test.py
+
+  # Same test, but peer B executes the task on a real local LLM through the
+  # api harness (openai flavor): llama.cpp serving Qwen2.5-0.5B on CPU.
+  acceptance-local-llm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -e .
+      - name: Cache model download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/llama.cpp
+          key: gguf-qwen2.5-0.5b-instruct-q4_k_m
+      - name: Install llama.cpp server (latest prebuilt release)
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
+            | python3 -c "import json,sys; print(next(a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if 'bin-ubuntu-x64' in a['name'] and a['name'].endswith('.zip')))")
+          curl -fsSL -o llama.zip "$url"
+          unzip -q llama.zip -d llama-cpp
+      - name: Start llama-server with Qwen2.5-0.5B-Instruct
+        run: |
+          set -euo pipefail
+          bin_dir=$(dirname "$(find llama-cpp -name llama-server -type f | head -1)")
+          LD_LIBRARY_PATH="$bin_dir" "$bin_dir/llama-server" \
+            -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:q4_k_m \
+            --port 8080 --temp 0 > llama-server.log 2>&1 &
+          for _ in $(seq 1 120); do
+            curl -fsS http://127.0.0.1:8080/health >/dev/null 2>&1 && exit 0
+            sleep 2
+          done
+          echo "llama-server never became healthy" >&2
+          tail -50 llama-server.log >&2
+          exit 1
+      - name: Run acceptance test (peer B executes on the local LLM)
+        env:
+          ANTHROPIC_API_KEY: local
+          ANTHROPIC_BASE_URL: http://127.0.0.1:8080
+          AGENTTORRENT_API_FLAVOR: openai
+        run: python acceptance_test.py
+      - name: Dump llama-server log on failure
+        if: failure()
+        run: tail -100 llama-server.log || true
