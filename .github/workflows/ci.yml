@@ -41,13 +41,37 @@ jobs:
         with:
           path: ~/.cache/llama.cpp
           key: gguf-qwen2.5-0.5b-instruct-q4_k_m
-      - name: Install llama.cpp server (latest prebuilt release)
+      - name: Install llama.cpp server (prebuilt release)
         run: |
           set -euo pipefail
-          url=$(curl -fsSL https://api.github.com/repos/ggml-org/llama.cpp/releases/latest \
-            | python3 -c "import json,sys; print(next(a['browser_download_url'] for a in json.load(sys.stdin)['assets'] if 'bin-ubuntu-x64' in a['name'] and a['name'].endswith('.zip')))")
-          curl -fsSL -o llama.zip "$url"
-          unzip -q llama.zip -d llama-cpp
+          curl -fsSL -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10" > releases.json
+          url=$(python3 - <<'EOF'
+          import json, sys
+
+          releases = json.load(open("releases.json"))
+          gpu_or_other_arch = ("vulkan", "cuda", "hip", "sycl", "musa", "rocm",
+                               "arm", "s390x", "riscv", "ppc")
+          for rel in releases:
+              for asset in rel.get("assets", []):
+                  n = asset["name"].lower()
+                  if ("ubuntu" in n and ("x64" in n or "amd64" in n)
+                          and n.endswith((".zip", ".tar.gz"))
+                          and not any(k in n for k in gpu_or_other_arch)):
+                      print(asset["browser_download_url"])
+                      sys.exit(0)
+          recent = [a["name"] for rel in releases[:3] for a in rel.get("assets", [])]
+          sys.exit(f"no ubuntu x64 CPU asset found; recent assets: {recent}")
+          EOF
+          )
+          echo "downloading $url"
+          curl -fsSL -o llama-archive "$url"
+          mkdir -p llama-cpp
+          case "$url" in
+            *.zip) unzip -q llama-archive -d llama-cpp ;;
+            *) tar -xzf llama-archive -C llama-cpp ;;
+          esac
+          find llama-cpp -name llama-server -type f
       - name: Start llama-server with Qwen2.5-0.5B-Instruct
         run: |
           set -euo pipefail
