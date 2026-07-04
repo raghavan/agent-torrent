@@ -1,5 +1,3 @@
-# AgentTorrent
-
 ![Agent Torrent — peer to peer meta harness for coding agents: submit a task, execute on a peer, verify the result](docs/agent-torrent-hero.png)
 
 [![CI](https://github.com/raghavan/agent-torrent/actions/workflows/ci.yml/badge.svg)](https://github.com/raghavan/agent-torrent/actions/workflows/ci.yml)
