@@ -50,18 +50,27 @@ jobs:
           import json, sys
 
           releases = json.load(open("releases.json"))
-          gpu_or_other_arch = ("vulkan", "cuda", "hip", "sycl", "musa", "rocm",
-                               "arm", "s390x", "riscv", "ppc")
+          other_platform = ("arm", "s390x", "riscv", "ppc", "win", "macos")
+          # Accelerated variants need their runtime (or, like OpenVINO, have
+          # crashed on plain CPU runners) — only used if no plain build exists.
+          accelerated = ("vulkan", "cuda", "hip", "sycl", "musa", "rocm", "openvino")
           for rel in releases:
-              for asset in rel.get("assets", []):
-                  n = asset["name"].lower()
-                  if ("ubuntu" in n and ("x64" in n or "amd64" in n)
-                          and n.endswith((".zip", ".tar.gz"))
-                          and not any(k in n for k in gpu_or_other_arch)):
-                      print(asset["browser_download_url"])
-                      sys.exit(0)
+              candidates = [
+                  a for a in rel.get("assets", [])
+                  if "ubuntu" in a["name"].lower()
+                  and ("x64" in a["name"].lower() or "amd64" in a["name"].lower())
+                  and a["name"].lower().endswith((".zip", ".tar.gz"))
+                  and not any(k in a["name"].lower() for k in other_platform)
+              ]
+              plain = [a for a in candidates
+                       if not any(k in a["name"].lower() for k in accelerated)]
+              if plain or candidates:
+                  pick = (plain or candidates)[0]
+                  print(f"picked {pick['name']} from {rel.get('tag_name')}", file=sys.stderr)
+                  print(pick["browser_download_url"])
+                  sys.exit(0)
           recent = [a["name"] for rel in releases[:3] for a in rel.get("assets", [])]
-          sys.exit(f"no ubuntu x64 CPU asset found; recent assets: {recent}")
+          sys.exit(f"no ubuntu x64 asset found; recent assets: {recent}")
           EOF
           )
           echo "downloading $url"
