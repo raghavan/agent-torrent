@@ -6,17 +6,21 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 A peer-to-peer **meta-harness**: desktop peers advertise agent capabilities
-(the `claude` and `codex` CLIs) and delegate coding tasks to each other,
-inspired by BitTorrent-style swarms. Your subscription idles most of the day —
-AgentTorrent lets peers seed that idle capacity to each other and earn credits
-to spend at their own peak. Python 3.11+, standard library plus
+(the `claude` and `codex` CLIs, or a [local LLM](#local-llm-no-cloud-account-needed))
+and delegate coding tasks to each other, inspired by BitTorrent-style swarms.
+Your subscription idles most of the day — AgentTorrent lets peers seed that
+idle capacity to each other and earn credits to spend at their own peak.
+Python 3.11+, standard library plus
 [PyNaCl](https://pynacl.readthedocs.io/) for signatures.
 
 > **Status: research prototype.** The protocol, sandbox, ledger, and discovery
-> all work (see the [acceptance test](#acceptance-test)), but there is no
-> authorization layer, no result verification, and no transport encryption —
-> by design, to keep the interesting questions visible. Read
-> [SECURITY.md](SECURITY.md) before running it outside a trusted network.
+> all work — every PR is [acceptance-tested](#acceptance-test) end-to-end in
+> CI, including a job where one peer delegates a task to another that
+> executes it on a **real local LLM** (llama.cpp + Qwen2.5-0.5B on the
+> runner's CPU, zero API credentials). But there is no authorization layer,
+> no result verification, and no transport encryption — by design, to keep
+> the interesting questions visible. Read [SECURITY.md](SECURITY.md) before
+> running it outside a trusted network.
 
 ## Architecture invariants
 
