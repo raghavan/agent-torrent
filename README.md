@@ -1,6 +1,6 @@
 # AgentTorrent
 
-![AgentTorrent — a peer-to-peer meta-harness: a secure execution mesh for coding agents, with requester, peer executor, and verifier peers exchanging tasks, patches, and verified results](docs/agent-torrent-hero.png)
+![Agent Torrent — peer to peer meta harness for coding agents: submit a task, execute on a peer, verify the result](docs/agent-torrent-hero.png)
 
 A prototype peer-to-peer **meta-harness**: desktop peers advertise agent
 capabilities (the `claude` and `codex` CLIs) and delegate coding tasks to
