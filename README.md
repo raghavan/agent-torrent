@@ -1,5 +1,7 @@
 # AgentTorrent
 
+![AgentTorrent — a peer-to-peer meta-harness: a secure execution mesh for coding agents, with requester, peer executor, and verifier peers exchanging tasks, patches, and verified results](docs/agent-torrent-hero.png)
+
 A prototype peer-to-peer **meta-harness**: desktop peers advertise agent
 capabilities (the `claude` and `codex` CLIs) and delegate coding tasks to
 each other, inspired by BitTorrent-style swarms. Python 3.11+, standard
