@@ -14,6 +14,13 @@ says:
 * the harness binary is resolved to an absolute path by the worker, not
   taken from the job.
 
+One deliberate, narrow exception: the worker's operator may allowlist
+specific environment variables (e.g. ``ANTHROPIC_API_KEY``) to pass
+into the sandbox so a real harness CLI can authenticate. The allowlist
+comes from the worker's own config — never from the job — so the
+invariant that nothing in the task text can widen the sandbox still
+holds.
+
 If no harness CLI is installed, execution is simulated with a canned
 response so the protocol can be exercised without credentials.
 ``max_tokens`` from the job manifest is advisory: it is surfaced to the
@@ -67,6 +74,7 @@ def execute_job(
     available_harnesses: dict[str, str],
     force_simulate: bool = False,
     simulate_delay: float = DEFAULT_SIMULATE_DELAY_SECONDS,
+    env_passthrough: tuple[str, ...] | list[str] = (),
     log: logging.Logger | None = None,
 ) -> dict:
     """Run a validated job in a sandbox; return a result dict.
@@ -105,13 +113,18 @@ def execute_job(
     binary = shutil.which(harness)
     assert binary is not None
     workdir = tempfile.mkdtemp(prefix="agenttorrent-job-")
-    # Fresh environment: nothing inherited from the peer process.
+    # Fresh environment: nothing inherited from the peer process, except
+    # variables the worker's operator explicitly allowlisted in config.
     sandbox_env = {
         "HOME": workdir,
         "TMPDIR": workdir,
         "PATH": os.defpath,
         "NO_COLOR": "1",
     }
+    for name in env_passthrough:
+        if name in os.environ:
+            sandbox_env[name] = os.environ[name]
+            log.info("job %s: passing allowlisted env var %s into sandbox", job["job_id"][:8], name)
     cmd = _harness_command(harness, binary, job)
     log.info(
         "job %s: executing via %s in sandbox %s (timeout %ds)",

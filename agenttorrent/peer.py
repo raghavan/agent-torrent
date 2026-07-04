@@ -46,6 +46,9 @@ class PeerConfig:
     accepts_tasks: bool = True
     force_simulate: bool = False
     simulate_delay: float = executor.DEFAULT_SIMULATE_DELAY_SECONDS
+    # Env vars copied into the execution sandbox (e.g. ANTHROPIC_API_KEY so a
+    # real harness CLI can authenticate). Worker-controlled; never job-controlled.
+    env_passthrough: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, data_dir: Path, overrides: dict | None = None) -> "PeerConfig":
@@ -208,6 +211,7 @@ class Peer:
             self.harnesses,
             force_simulate=self.config.force_simulate,
             simulate_delay=self.config.simulate_delay,
+            env_passthrough=self.config.env_passthrough,
             log=self.log,
         )
         conn.send(protocol.TASK_RESULT, {"job_id": job["job_id"], "result": result})

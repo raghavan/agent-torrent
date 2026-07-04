@@ -80,10 +80,14 @@ class Discovery:
     # -- lifecycle ---------------------------------------------------------
 
     def start(self) -> None:
+        # One socket for both directions: beacons then originate *from* the
+        # discovery port, so a NAT mapping created by our outbound beacons
+        # routes unicast replies straight back to us (NAT traversal).
         recv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if hasattr(socket, "SO_REUSEPORT"):
             recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        recv.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         recv.bind(("", self.discovery_port))
         recv.settimeout(1.0)
         self._recv_sock = recv
@@ -130,8 +134,7 @@ class Discovery:
         return json.dumps(envelope).encode()
 
     def _send_loop(self) -> None:
-        send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        send.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        assert self._recv_sock is not None
         while not self._stop.is_set():
             data = self._beacon_bytes()
             targets: list[tuple[str, int]] = [(h, self.discovery_port) for h in _BROADCAST_TARGETS]
@@ -141,12 +144,11 @@ class Discovery:
                     targets.append((host, int(port)))
             for addr in targets:
                 try:
-                    send.sendto(data, addr)
+                    self._recv_sock.sendto(data, addr)
                     self.log.info("SEND %s -> udp://%s:%d", MSG_BEACON, addr[0], addr[1])
                 except OSError as exc:
                     self.log.debug("beacon to %s failed: %s", addr, exc)
             self._stop.wait(BEACON_INTERVAL_SECONDS)
-        send.close()
 
     # -- beacon receiving ----------------------------------------------------
 
@@ -204,3 +206,13 @@ class Discovery:
                 sorted(manifest["harnesses"]) or "none (simulated)",
                 manifest["accepts_tasks"],
             )
+            # Reply with a unicast beacon to the observed source address so
+            # the new peer learns us even where broadcast can't reach it
+            # (bootstrap across the internet, peers behind NAT). Only on
+            # first sight, so two peers converge without a beacon loop.
+            try:
+                assert self._recv_sock is not None
+                self._recv_sock.sendto(self._beacon_bytes(), addr)
+                self.log.info("SEND %s -> udp://%s:%d (reply to new peer)", MSG_BEACON, addr[0], addr[1])
+            except OSError as exc:
+                self.log.debug("beacon reply to %s failed: %s", addr, exc)
