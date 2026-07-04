@@ -67,6 +67,7 @@ def cmd_start(ns: argparse.Namespace) -> int:
             "force_simulate": True if ns.force_simulate else None,
             "simulate_delay": ns.simulate_delay,
             "max_runtime_seconds": ns.max_runtime,
+            "env_passthrough": ns.env_passthrough or None,
         },
     )
     peer = Peer(data_dir, config)
@@ -150,6 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="seconds a simulated execution takes (default 1.0)")
     p_start.add_argument("--max-runtime", type=int, default=None,
                          help="largest job runtime this peer will accept (default 300)")
+    p_start.add_argument("--env-passthrough", action="append", metavar="VAR",
+                         help="env var to copy into the execution sandbox, e.g. ANTHROPIC_API_KEY "
+                              "(repeatable; default: none)")
     p_start.set_defaults(func=cmd_start)
 
     p_peers = sub.add_parser("peers", help="show the gossip-built peer table")
