@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agenttorrent"
+version = "0.1.0"
+description = "AgentTorrent: a peer-to-peer meta-harness where desktop peers advertise agent capabilities and delegate coding tasks to each other, BitTorrent-swarm style."
+requires-python = ">=3.11"
+dependencies = ["pynacl>=1.5"]
+
+[project.scripts]
+mesh = "agenttorrent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agenttorrent*"]
