@@ -21,9 +21,15 @@ Scenario (run on one machine, real UDP broadcast discovery, real TCP):
    simulate mode first) so the kill lands mid-job deterministically.
 
 Set ``AGENTTORRENT_ACCEPTANCE_SIMULATE=1`` to force simulation even
-when an API key is present. ``ANTHROPIC_BASE_URL`` and
-``AGENTTORRENT_API_MODEL`` are forwarded to the worker's sandbox when
-set. Exits 0 on success, 1 on failure (with both peers' logs dumped).
+when an API key is present. ``ANTHROPIC_BASE_URL``,
+``AGENTTORRENT_API_FLAVOR``, and ``AGENTTORRENT_API_MODEL`` are
+forwarded to the worker's sandbox when set — so a local LLM server
+works too, e.g. with llama.cpp serving a small model on port 8080:
+
+    ANTHROPIC_API_KEY=local ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \\
+        AGENTTORRENT_API_FLAVOR=openai python3 acceptance_test.py
+
+Exits 0 on success, 1 on failure (with both peers' logs dumped).
 """
 
 from __future__ import annotations
@@ -56,8 +62,8 @@ REAL_MODE = bool(os.environ.get("ANTHROPIC_API_KEY")) and (
 # Env vars the worker copies into its execution sandbox in real mode.
 SANDBOX_ENV_VARS = [
     name
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "AGENTTORRENT_API_MODEL",
-                 "HTTPS_PROXY", "SSL_CERT_FILE")
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "AGENTTORRENT_API_FLAVOR",
+                 "AGENTTORRENT_API_MODEL", "HTTPS_PROXY", "SSL_CERT_FILE")
     if name in os.environ
 ]
 
@@ -165,6 +171,7 @@ def main() -> int:
         rc, result = cli_json(
             dir_a, "delegate", TASK_TEXT, "--harness", harness,
             "--max-runtime", str(max_runtime),
+            "--max-tokens", "512",  # plenty for this task; keeps small local models from rambling
             timeout=60.0 + max_runtime,
         )
         assert rc == 0, f"delegate exited {rc}: {result}"

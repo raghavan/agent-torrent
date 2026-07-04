@@ -129,11 +129,37 @@ so reachable ports mean strangers can run jobs on your harness.
 ## Real execution vs simulation
 
 Three harnesses are supported: the `claude` and `codex` CLIs (detected on
-PATH), and `api` — a direct Anthropic Messages API call (stdlib `urllib`,
-no SDK) advertised whenever the worker's environment has an
-`ANTHROPIC_API_KEY`. The `api` harness runs as a subprocess inside the
-same sandbox as the CLIs; override its model with `AGENTTORRENT_API_MODEL`
-and its endpoint with `ANTHROPIC_BASE_URL`.
+PATH), and `api` — a direct LLM API call (stdlib `urllib`, no SDK)
+advertised whenever the worker's environment has an `ANTHROPIC_API_KEY`.
+The `api` harness runs as a subprocess inside the same sandbox as the
+CLIs and speaks two wire formats: the Anthropic Messages API (default)
+and, with `AGENTTORRENT_API_FLAVOR=openai`, OpenAI-style chat
+completions — which is what local LLM servers speak. Override the model
+with `AGENTTORRENT_API_MODEL` and the endpoint with `ANTHROPIC_BASE_URL`.
+
+### Local LLM (no cloud account needed)
+
+Any OpenAI-compatible local server works as a worker backend — llama.cpp,
+Ollama, vLLM, LM Studio. The lightest setup is llama.cpp with a ~400 MB
+model that runs fine on CPU:
+
+```sh
+# terminal 1: serve a tiny model locally (llama-server fetches it once)
+llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:q4_k_m --port 8080
+
+# terminal 2: a worker peer backed by the local model
+ANTHROPIC_API_KEY=local ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
+AGENTTORRENT_API_FLAVOR=openai \
+mesh start --env-passthrough ANTHROPIC_API_KEY \
+           --env-passthrough ANTHROPIC_BASE_URL \
+           --env-passthrough AGENTTORRENT_API_FLAVOR
+```
+
+(`ANTHROPIC_API_KEY` can be any placeholder — local servers don't check
+it, but the worker uses its presence to advertise the `api` harness.)
+With Ollama instead: `ollama serve` + `ollama pull qwen2.5:0.5b`, then
+`ANTHROPIC_BASE_URL=http://127.0.0.1:11434` and
+`AGENTTORRENT_API_MODEL=qwen2.5:0.5b`.
 
 If a worker has no harness at all (or runs with `--force-simulate`), it
 returns a canned simulated response — the full protocol, ledger, and
@@ -170,6 +196,15 @@ definition. Without a key it falls back to simulated execution, which is
 what CI runs on every PR. Set `AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to
 force simulation even when a key is present. Note the real path spends a
 small amount of API credit per run and executes on your account.
+
+To run the real path against a **local model** instead (zero cost, no
+account), start a llama.cpp server as shown in
+[Local LLM](#local-llm-no-cloud-account-needed) and run:
+
+```sh
+ANTHROPIC_API_KEY=local ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
+AGENTTORRENT_API_FLAVOR=openai python3 acceptance_test.py
+```
 
 ## Contributing
 

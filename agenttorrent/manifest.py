@@ -18,7 +18,7 @@ import os
 import shutil
 import subprocess
 
-from .api_harness import DEFAULT_MODEL as _DEFAULT_API_MODEL
+from .api_harness import DEFAULT_MODEL, DEFAULT_OPENAI_MODEL
 
 log = logging.getLogger("agenttorrent.manifest")
 
@@ -58,8 +58,11 @@ def detect_harnesses() -> dict[str, str]:
         else:
             log.warning("harness %s at %s exited %d on --version", name, path, proc.returncode)
     if os.environ.get("ANTHROPIC_API_KEY"):
-        model = os.environ.get("AGENTTORRENT_API_MODEL", _DEFAULT_API_MODEL)
-        found["api"] = f"anthropic-messages-api/{model}"
+        if os.environ.get("AGENTTORRENT_API_FLAVOR", "anthropic") == "openai":
+            wire, model = "openai-chat-api", os.environ.get("AGENTTORRENT_API_MODEL", DEFAULT_OPENAI_MODEL)
+        else:
+            wire, model = "anthropic-messages-api", os.environ.get("AGENTTORRENT_API_MODEL", DEFAULT_MODEL)
+        found["api"] = f"{wire}/{model}"
         log.info("detected harness api (%s)", found["api"])
     return found
 
