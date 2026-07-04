@@ -15,9 +15,9 @@ Python 3.11+, standard library plus
 
 > **Status: research prototype.** The protocol, sandbox, ledger, and discovery
 > all work — every PR is [acceptance-tested](#acceptance-test) end-to-end in
-> CI, including a job where one peer delegates a task to another that
-> executes it on a **real local LLM** (llama.cpp + Qwen2.5-0.5B on the
-> runner's CPU, zero API credentials). But there is no authorization layer,
+> CI: one peer delegates a task to another that executes it on a **real
+> local LLM** (llama.cpp + Qwen2.5-0.5B on the runner's CPU, zero API
+> credentials — no cloud provider involved). But there is no authorization layer,
 > no result verification, and no transport encryption — by design, to keep
 > the interesting questions visible. Read [SECURITY.md](SECURITY.md) before
 > running it outside a trusted network.
@@ -201,10 +201,11 @@ definition. Without a key it falls back to simulated execution. Set
 is present. Note the real path spends a small amount of API credit per
 run and executes on your account.
 
-CI runs both on every PR: the simulated test across Python versions
-(fast, no credentials), and an `acceptance-local-llm` job where peer B
-executes the task on a real local model — llama.cpp serving
-Qwen2.5-0.5B-Instruct on the runner's CPU, no API key involved.
+CI runs the acceptance test on every PR **against a local model only** —
+peer B executes the task on llama.cpp serving Qwen2.5-0.5B-Instruct on
+the runner's CPU, across Python 3.11 and 3.12. No Anthropic (or any
+cloud) API is ever called in CI; the `ANTHROPIC_API_KEY` the job sets is
+a placeholder that makes the worker advertise the `api` harness.
 
 To run the real path against a **local model** instead (zero cost, no
 account), start a llama.cpp server as shown in

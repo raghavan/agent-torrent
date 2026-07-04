@@ -6,9 +6,13 @@ on:
   pull_request:
 
 jobs:
-  acceptance:
+  # The full acceptance test (two live peers, delegation, kill + refund),
+  # with peer B executing the task on a real local LLM through the api
+  # harness (openai flavor): llama.cpp serving Qwen2.5-0.5B on CPU.
+  # No cloud provider or API credentials are involved.
+  acceptance-local-llm:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -21,21 +25,6 @@ jobs:
         run: pip install -e .
       - name: Byte-compile all modules
         run: python -m compileall agenttorrent acceptance_test.py
-      - name: Run acceptance test (two live peers, delegation, kill + refund)
-        run: python acceptance_test.py
-
-  # Same test, but peer B executes the task on a real local LLM through the
-  # api harness (openai flavor): llama.cpp serving Qwen2.5-0.5B on CPU.
-  acceptance-local-llm:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install
-        run: pip install -e .
       - name: Cache model download
         uses: actions/cache@v4
         with:
@@ -97,6 +86,8 @@ jobs:
           exit 1
       - name: Run acceptance test (peer B executes on the local LLM)
         env:
+          # Placeholder key — llama-server doesn't check auth; its presence is
+          # what makes the worker advertise the `api` harness.
           ANTHROPIC_API_KEY: local
           ANTHROPIC_BASE_URL: http://127.0.0.1:8080
           AGENTTORRENT_API_FLAVOR: openai
