@@ -162,7 +162,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_delegate = sub.add_parser("delegate", help="delegate a task to the swarm")
     p_delegate.add_argument("task", help="task text for the remote harness")
-    p_delegate.add_argument("--harness", choices=("claude", "codex", "any"), default="any")
+    p_delegate.add_argument("--harness", choices=("claude", "codex", "api", "any"), default="any")
     p_delegate.add_argument("--max-tokens", type=int, default=4096)
     p_delegate.add_argument("--max-runtime", type=int, default=60, help="hard timeout for the job in seconds")
     p_delegate.add_argument("--expect", default="plain text answer", help="expected_output description")

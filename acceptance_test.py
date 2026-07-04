@@ -4,17 +4,26 @@
 Scenario (run on one machine, real UDP broadcast discovery, real TCP):
 
 1. Start peer A and peer B on different TCP ports sharing one UDP
-   discovery port, both forced to simulated execution so the test needs
-   no harness credentials.
+   discovery port. If ``ANTHROPIC_API_KEY`` is set, peer B runs with
+   real execution via the ``api`` harness (a live LLM call); otherwise
+   both peers are forced to simulated execution so the test needs no
+   credentials (this is what CI runs).
 2. Peer A delegates "write a python function that reverses a string
-   without slicing" requiring any harness. Peer B accepts, executes in
-   its sandbox, returns the result. A prints the result; A's ledger
-   shows a 1-credit debit (10 -> 9) and B's a 1-credit credit (10 -> 11).
+   without slicing". Peer B accepts, executes in its sandbox, returns
+   the result. A prints the result; in real mode the result must be
+   genuine LLM output (not the canned simulation) and must contain a
+   function definition. A's ledger shows a 1-credit debit (10 -> 9)
+   and B's a 1-credit credit (10 -> 11).
 3. Peer B is killed mid-job during a second delegation. Peer A fails
    gracefully (no crash, clear error) and the escrowed credit is
-   refunded, leaving A's balance unchanged.
+   refunded, leaving A's balance unchanged. This step always runs
+   against simulated execution (in real mode peer B is restarted in
+   simulate mode first) so the kill lands mid-job deterministically.
 
-Exits 0 on success, 1 on failure (with both peers' logs dumped).
+Set ``AGENTTORRENT_ACCEPTANCE_SIMULATE=1`` to force simulation even
+when an API key is present. ``ANTHROPIC_BASE_URL`` and
+``AGENTTORRENT_API_MODEL`` are forwarded to the worker's sandbox when
+set. Exits 0 on success, 1 on failure (with both peers' logs dumped).
 """
 
 from __future__ import annotations
@@ -36,26 +45,44 @@ DISCOVERY_PORT = 46000 + (os.getpid() % 1000)
 TCP_PORT_A = 9401
 TCP_PORT_B = 9402
 SIMULATE_DELAY = 3.0  # long enough to kill peer B mid-job
+REAL_MAX_RUNTIME = 120  # a live LLM call needs more headroom than a canned reply
 
 TASK_TEXT = "write a python function that reverses a string without slicing"
+
+# Real execution whenever a key is present (opt out with the env var below).
+REAL_MODE = bool(os.environ.get("ANTHROPIC_API_KEY")) and (
+    os.environ.get("AGENTTORRENT_ACCEPTANCE_SIMULATE") != "1"
+)
+# Env vars the worker copies into its execution sandbox in real mode.
+SANDBOX_ENV_VARS = [
+    name
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "AGENTTORRENT_API_MODEL",
+                 "HTTPS_PROXY", "SSL_CERT_FILE")
+    if name in os.environ
+]
 
 
 def mesh(data_dir: Path, *args: str) -> list[str]:
     return [PYTHON, "-m", "agenttorrent.cli", "--data-dir", str(data_dir), *args]
 
 
-def start_peer(name: str, data_dir: Path, tcp_port: int) -> tuple[subprocess.Popen, Path]:
+def start_peer(
+    name: str, data_dir: Path, tcp_port: int, simulate: bool = True
+) -> tuple[subprocess.Popen, Path]:
     log_path = RUN_DIR / f"{name}.log"
     log_file = open(log_path, "w")
+    args = [
+        "start",
+        "--tcp-port", str(tcp_port),
+        "--discovery-port", str(DISCOVERY_PORT),
+    ]
+    if simulate:
+        args += ["--force-simulate", "--simulate-delay", str(SIMULATE_DELAY)]
+    else:
+        for var in SANDBOX_ENV_VARS:
+            args += ["--env-passthrough", var]
     proc = subprocess.Popen(
-        mesh(
-            data_dir,
-            "start",
-            "--tcp-port", str(tcp_port),
-            "--discovery-port", str(DISCOVERY_PORT),
-            "--force-simulate",
-            "--simulate-delay", str(SIMULATE_DELAY),
-        ),
+        mesh(data_dir, *args),
         cwd=REPO_ROOT,
         stdout=log_file,
         stderr=subprocess.STDOUT,
@@ -116,10 +143,11 @@ def main() -> int:
     procs: list[subprocess.Popen] = []
     logs: list[Path] = []
     try:
-        print(f"[1/6] starting peer A (tcp {TCP_PORT_A}) and peer B (tcp {TCP_PORT_B}), "
+        mode = "REAL execution via the api harness" if REAL_MODE else "simulated execution"
+        print(f"[1/6] starting peer A (tcp {TCP_PORT_A}) and peer B (tcp {TCP_PORT_B}, {mode}), "
               f"shared discovery udp/{DISCOVERY_PORT}")
         peer_a, log_a = start_peer("peer-a", dir_a, TCP_PORT_A)
-        peer_b, log_b = start_peer("peer-b", dir_b, TCP_PORT_B)
+        peer_b, log_b = start_peer("peer-b", dir_b, TCP_PORT_B, simulate=not REAL_MODE)
         procs += [peer_a, peer_b]
         logs += [log_a, log_b]
 
@@ -129,11 +157,27 @@ def main() -> int:
         assert peer_a.poll() is None and peer_b.poll() is None, "a peer process died during discovery"
         print("      both peers see each other")
 
-        print(f"[3/6] peer A delegating: {TASK_TEXT!r}")
-        rc, result = cli_json(dir_a, "delegate", TASK_TEXT, "--harness", "any", "--max-runtime", "30")
+        if REAL_MODE:
+            harness, max_runtime = "api", REAL_MAX_RUNTIME
+        else:
+            harness, max_runtime = "any", 30
+        print(f"[3/6] peer A delegating (harness={harness}): {TASK_TEXT!r}")
+        rc, result = cli_json(
+            dir_a, "delegate", TASK_TEXT, "--harness", harness,
+            "--max-runtime", str(max_runtime),
+            timeout=60.0 + max_runtime,
+        )
         assert rc == 0, f"delegate exited {rc}: {result}"
         assert result["status"] == "ok", f"delegation failed: {result}"
         assert result["output"].strip(), "empty result output"
+        if REAL_MODE:
+            assert result["simulated"] is False, f"expected real execution, got: {result}"
+            assert result["harness"] == "api", f"expected api harness, got: {result['harness']}"
+            assert "[simulated by AgentTorrent" not in result["output"], "got the canned simulated reply"
+            assert "def " in result["output"] or "lambda" in result["output"], (
+                "LLM output does not look like a python function:\n" + result["output"]
+            )
+            print("      real LLM execution confirmed (harness=api, simulated=false)")
         print("      --- result from peer B ---")
         for line in result["output"].splitlines():
             print(f"      {line}")
@@ -146,7 +190,20 @@ def main() -> int:
         assert record_kinds(dir_b) == ["opening", "work"], record_kinds(dir_b)
         print(f"      peer A: 10 -> {bal_a} (debited), peer B: 10 -> {bal_b} (credited)")
 
-        print("[5/6] delegating again and killing peer B mid-job")
+        if REAL_MODE:
+            # The kill must land while the job is still running, which a real
+            # LLM call cannot guarantee — restart peer B (same identity and
+            # ledger) in simulate mode with a known 3s execution time.
+            print("[5/6] restarting peer B in simulate mode, then killing it mid-job")
+            peer_b.terminate()
+            peer_b.wait(timeout=10)
+            peer_b, log_b = start_peer("peer-b-sim", dir_b, TCP_PORT_B, simulate=True)
+            procs.append(peer_b)
+            logs.append(log_b)
+            wait_for_peer(dir_b, 1)
+            wait_for_peer(dir_a, 1)
+        else:
+            print("[5/6] delegating again and killing peer B mid-job")
         delegate2 = subprocess.Popen(
             mesh(dir_a, "delegate", "sum the first 100 primes", "--harness", "any",
                  "--max-runtime", "30", "--json"),

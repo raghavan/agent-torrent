@@ -51,7 +51,8 @@ to spend at their own peak. Python 3.11+, standard library plus
 | `discovery.py` | UDP broadcast beacons + gossip-built peer table |
 | `protocol.py` | TCP JSON-line protocol: `HANDSHAKE`, `TASK_OFFER`, `TASK_ACCEPT`, `TASK_REJECT`, `TASK_RESULT` |
 | `job.py` | job manifest schema — all fields required, no defaults |
-| `executor.py` | sandboxed harness invocation, simulated when no CLI is installed |
+| `executor.py` | sandboxed harness invocation, simulated when no harness is available |
+| `api_harness.py` | the `api` harness: one direct Anthropic Messages API call, run inside the sandbox |
 | `ledger.py` | plain-JSON double-entry credit ledger (both peers start at 10) |
 | `peer.py` | the peer process: worker + requester + local control channel |
 | `cli.py` | `mesh start`, `mesh peers`, `mesh delegate`, `mesh ledger` |
@@ -127,13 +128,20 @@ so reachable ports mean strangers can run jobs on your harness.
 
 ## Real execution vs simulation
 
-If a worker has no harness CLI installed (or runs with `--force-simulate`),
-it returns a canned simulated response — the full protocol, ledger, and
+Three harnesses are supported: the `claude` and `codex` CLIs (detected on
+PATH), and `api` — a direct Anthropic Messages API call (stdlib `urllib`,
+no SDK) advertised whenever the worker's environment has an
+`ANTHROPIC_API_KEY`. The `api` harness runs as a subprocess inside the
+same sandbox as the CLIs; override its model with `AGENTTORRENT_API_MODEL`
+and its endpoint with `ANTHROPIC_BASE_URL`.
+
+If a worker has no harness at all (or runs with `--force-simulate`), it
+returns a canned simulated response — the full protocol, ledger, and
 sandbox path work with zero credentials.
 
 For real execution, the sandbox's from-scratch environment means the
-harness CLI has no credentials by default. Allowlist exactly what it
-needs, on the worker only:
+harness has no credentials by default. Allowlist exactly what it needs,
+on the worker only:
 
 ```sh
 ANTHROPIC_API_KEY=sk-... mesh start --env-passthrough ANTHROPIC_API_KEY
@@ -151,10 +159,17 @@ python3 acceptance_test.py
 ```
 
 Starts two peers on one machine (different TCP ports, shared broadcast
-discovery port, simulated execution), delegates the reverse-a-string
-task from A to B, checks the result and the one-credit ledger transfer
-(A: 10→9, B: 10→11), then kills B mid-job and confirms A fails
-gracefully and is refunded. The same test runs in CI on every PR.
+discovery port), delegates the reverse-a-string task from A to B, checks
+the result and the one-credit ledger transfer (A: 10→9, B: 10→11), then
+kills B mid-job and confirms A fails gracefully and is refunded.
+
+If `ANTHROPIC_API_KEY` is set, peer B executes the task **for real**
+through the `api` harness — the test asserts the result is genuine LLM
+output (not the canned simulation) and actually contains a function
+definition. Without a key it falls back to simulated execution, which is
+what CI runs on every PR. Set `AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to
+force simulation even when a key is present. Note the real path spends a
+small amount of API credit per run and executes on your account.
 
 ## Contributing
 
