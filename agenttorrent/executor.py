@@ -21,10 +21,16 @@ comes from the worker's own config — never from the job — so the
 invariant that nothing in the task text can widen the sandbox still
 holds.
 
-If no harness CLI is installed, execution is simulated with a canned
+Three harnesses are supported: the ``claude`` and ``codex`` CLIs, and
+``api`` — a direct Anthropic Messages API call (``api_harness.py``, run
+as a subprocess in the same sandbox) for workers that have an
+``ANTHROPIC_API_KEY`` but no agent CLI installed.
+
+If no harness is available, execution is simulated with a canned
 response so the protocol can be exercised without credentials.
-``max_tokens`` from the job manifest is advisory: it is surfaced to the
-harness in the prompt preamble but current CLIs expose no hard flag.
+``max_tokens`` from the job manifest is advisory for the CLI harnesses
+(surfaced in the prompt preamble; current CLIs expose no hard flag) and
+enforced for the ``api`` harness.
 """
 
 from __future__ import annotations
@@ -33,10 +39,14 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
+from pathlib import Path
 
 from .job import validate_job
+
+_API_HARNESS_SCRIPT = Path(__file__).resolve().parent / "api_harness.py"
 
 DEFAULT_SIMULATE_DELAY_SECONDS = 1.0
 
@@ -57,7 +67,17 @@ placeholder result proving the delegation protocol end to end.)
 
 
 def _harness_command(name: str, binary: str, job: dict) -> list[str]:
-    """Non-interactive invocation for each supported harness CLI."""
+    """Non-interactive invocation for each supported harness."""
+    if name == "api":
+        # max_tokens is enforced for real by the API, so no advisory preamble.
+        prompt = f"Expected output: {job['expected_output']}\n\n{job['task_text']}"
+        return [
+            binary,
+            str(_API_HARNESS_SCRIPT),
+            "--max-tokens", str(job["max_tokens"]),
+            "--timeout", str(job["max_runtime_seconds"]),
+            prompt,
+        ]
     prompt = (
         f"[advisory limit: at most {job['max_tokens']} output tokens]\n"
         f"Expected output: {job['expected_output']}\n\n{job['task_text']}"
@@ -67,6 +87,13 @@ def _harness_command(name: str, binary: str, job: dict) -> list[str]:
     if name == "codex":
         return [binary, "exec", prompt]
     raise ValueError(f"unknown harness {name!r}")
+
+
+def _harness_usable(name: str, available_harnesses: dict[str, str]) -> bool:
+    """A harness is usable if advertised and its binary is still resolvable."""
+    if name not in available_harnesses:
+        return False
+    return True if name == "api" else shutil.which(name) is not None
 
 
 def execute_job(
@@ -90,11 +117,11 @@ def execute_job(
     harness: str | None = None
     if not force_simulate:
         if required == "any":
-            for candidate in ("claude", "codex"):
-                if candidate in available_harnesses and shutil.which(candidate):
+            for candidate in ("claude", "codex", "api"):
+                if _harness_usable(candidate, available_harnesses):
                     harness = candidate
                     break
-        elif required in available_harnesses and shutil.which(required):
+        elif _harness_usable(required, available_harnesses):
             harness = required
 
     started = time.monotonic()
@@ -110,7 +137,7 @@ def execute_job(
             "runtime_seconds": round(time.monotonic() - started, 3),
         }
 
-    binary = shutil.which(harness)
+    binary = sys.executable if harness == "api" else shutil.which(harness)
     assert binary is not None
     workdir = tempfile.mkdtemp(prefix="agenttorrent-job-")
     # Fresh environment: nothing inherited from the peer process, except

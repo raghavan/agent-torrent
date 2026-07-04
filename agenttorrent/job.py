@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-HARNESS_CHOICES = ("claude", "codex", "any")
+HARNESS_CHOICES = ("claude", "codex", "api", "any")
 
 REQUIRED_FIELDS = (
     "job_id",
