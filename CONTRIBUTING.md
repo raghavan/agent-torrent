@@ -28,8 +28,10 @@ pip install -e .
 
 ## Before you open a PR
 
-- Run the acceptance test — it must pass: `python3 acceptance_test.py`
-  (starts two real peers on your machine; needs no credentials).
+- Run the acceptance test — it must pass. It always runs against a real
+  local model (no simulated fallback), so start one first (see the
+  README's Local LLM section; no credentials needed):
+  `AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py`
 - Match the existing style: small files, type hints, module docstrings that
   say which invariant the module protects.
 - Dependencies: standard library plus PyNaCl only. No new dependencies

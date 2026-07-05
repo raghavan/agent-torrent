@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
-"""AgentTorrent acceptance test.
+"""AgentTorrent acceptance test — always runs against a real local model.
+
+Requires ``AGENTTORRENT_API_BASE_URL`` pointing at an OpenAI-compatible
+local LLM server. There is no simulated fallback: if the local-model
+path is broken or unconfigured, the test fails — that is the point, so
+CI cannot go green without it. E.g. with llama.cpp serving a small
+model on port 8080:
+
+    llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:q4_k_m --port 8080
+    AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py
 
 Scenario (run on one machine, real UDP broadcast discovery, real TCP):
 
 1. Start peer A and peer B on different TCP ports sharing one UDP
-   discovery port. If ``AGENTTORRENT_API_BASE_URL`` is set, peer B runs
-   with real execution via the ``api`` harness — a live call to the
-   local LLM server at that URL (this is what CI runs, against
-   llama.cpp). Otherwise both peers are forced to simulated execution
-   so the test needs no model at all.
+   discovery port. Peer B executes for real via the ``api`` harness —
+   a live call to the local LLM server.
 2. Peer A delegates "write a python function that reverses a string
    without slicing". Peer B accepts, executes in its sandbox, returns
-   the result. A prints the result; in real mode the result must be
-   genuine LLM output (not the canned simulation) and must contain a
-   function definition. A's ledger shows a 1-credit debit (10 -> 9)
-   and B's a 1-credit credit (10 -> 11).
+   the result, which must be genuine LLM output (not the canned
+   simulation) and must contain a function definition. A's ledger
+   shows a 1-credit debit (10 -> 9) and B's a 1-credit credit
+   (10 -> 11).
 3. Peer B is killed mid-job during a second delegation. Peer A fails
    gracefully (no crash, clear error) and the escrowed credit is
-   refunded, leaving A's balance unchanged. This step always runs
-   against simulated execution (in real mode peer B is restarted in
-   simulate mode first) so the kill lands mid-job deterministically.
+   refunded, leaving A's balance unchanged. For this step peer B is
+   restarted with a fixed 3-second canned execution so the kill lands
+   mid-job deterministically — a live LLM call cannot guarantee that
+   timing.
 
-Set ``AGENTTORRENT_ACCEPTANCE_SIMULATE=1`` to force simulation even
-when a base URL is present. ``AGENTTORRENT_API_MODEL`` and
-``AGENTTORRENT_API_KEY`` are forwarded to the worker's sandbox when
-set. E.g. with llama.cpp serving a small model on port 8080:
-
-    AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py
+``AGENTTORRENT_API_MODEL`` and ``AGENTTORRENT_API_KEY`` are forwarded
+to the worker's sandbox when set.
 
 Exits 0 on success, 1 on failure (with both peers' logs dumped).
 """
@@ -54,12 +57,7 @@ REAL_MAX_RUNTIME = 120  # a live LLM call needs more headroom than a canned repl
 
 TASK_TEXT = "write a python function that reverses a string without slicing"
 
-# Real execution whenever a local LLM server is configured (opt out with
-# the env var below).
-REAL_MODE = bool(os.environ.get("AGENTTORRENT_API_BASE_URL")) and (
-    os.environ.get("AGENTTORRENT_ACCEPTANCE_SIMULATE") != "1"
-)
-# Env vars the worker copies into its execution sandbox in real mode.
+# Env vars the worker copies into its execution sandbox.
 SANDBOX_ENV_VARS = [
     name
     for name in ("AGENTTORRENT_API_BASE_URL", "AGENTTORRENT_API_MODEL",
@@ -141,6 +139,17 @@ def dump_logs(logs: list[Path]) -> None:
 
 
 def main() -> int:
+    base_url = os.environ.get("AGENTTORRENT_API_BASE_URL")
+    if not base_url:
+        print(
+            "acceptance test: AGENTTORRENT_API_BASE_URL is not set.\n"
+            "The test always runs against a real local model — start an\n"
+            "OpenAI-compatible server and point the test at it, e.g.:\n"
+            "  llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:q4_k_m --port 8080\n"
+            "  AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py",
+            file=sys.stderr,
+        )
+        return 1
     if RUN_DIR.exists():
         shutil.rmtree(RUN_DIR)
     RUN_DIR.mkdir()
@@ -149,11 +158,11 @@ def main() -> int:
     procs: list[subprocess.Popen] = []
     logs: list[Path] = []
     try:
-        mode = "REAL execution via the api harness" if REAL_MODE else "simulated execution"
-        print(f"[1/6] starting peer A (tcp {TCP_PORT_A}) and peer B (tcp {TCP_PORT_B}, {mode}), "
+        print(f"[1/6] starting peer A (tcp {TCP_PORT_A}) and peer B (tcp {TCP_PORT_B}, "
+              f"real execution on the local model at {base_url}), "
               f"shared discovery udp/{DISCOVERY_PORT}")
         peer_a, log_a = start_peer("peer-a", dir_a, TCP_PORT_A)
-        peer_b, log_b = start_peer("peer-b", dir_b, TCP_PORT_B, simulate=not REAL_MODE)
+        peer_b, log_b = start_peer("peer-b", dir_b, TCP_PORT_B, simulate=False)
         procs += [peer_a, peer_b]
         logs += [log_a, log_b]
 
@@ -163,28 +172,23 @@ def main() -> int:
         assert peer_a.poll() is None and peer_b.poll() is None, "a peer process died during discovery"
         print("      both peers see each other")
 
-        if REAL_MODE:
-            harness, max_runtime = "api", REAL_MAX_RUNTIME
-        else:
-            harness, max_runtime = "any", 30
-        print(f"[3/6] peer A delegating (harness={harness}): {TASK_TEXT!r}")
+        print(f"[3/6] peer A delegating (harness=api): {TASK_TEXT!r}")
         rc, result = cli_json(
-            dir_a, "delegate", TASK_TEXT, "--harness", harness,
-            "--max-runtime", str(max_runtime),
+            dir_a, "delegate", TASK_TEXT, "--harness", "api",
+            "--max-runtime", str(REAL_MAX_RUNTIME),
             "--max-tokens", "512",  # plenty for this task; keeps small local models from rambling
-            timeout=60.0 + max_runtime,
+            timeout=60.0 + REAL_MAX_RUNTIME,
         )
         assert rc == 0, f"delegate exited {rc}: {result}"
         assert result["status"] == "ok", f"delegation failed: {result}"
         assert result["output"].strip(), "empty result output"
-        if REAL_MODE:
-            assert result["simulated"] is False, f"expected real execution, got: {result}"
-            assert result["harness"] == "api", f"expected api harness, got: {result['harness']}"
-            assert "[simulated by AgentTorrent" not in result["output"], "got the canned simulated reply"
-            assert "def " in result["output"] or "lambda" in result["output"], (
-                "LLM output does not look like a python function:\n" + result["output"]
-            )
-            print("      real LLM execution confirmed (harness=api, simulated=false)")
+        assert result["simulated"] is False, f"expected real execution, got: {result}"
+        assert result["harness"] == "api", f"expected api harness, got: {result['harness']}"
+        assert "[simulated by AgentTorrent" not in result["output"], "got the canned simulated reply"
+        assert "def " in result["output"] or "lambda" in result["output"], (
+            "LLM output does not look like a python function:\n" + result["output"]
+        )
+        print("      real LLM execution confirmed (harness=api, simulated=false)")
         print("      --- result from peer B ---")
         for line in result["output"].splitlines():
             print(f"      {line}")
@@ -197,20 +201,17 @@ def main() -> int:
         assert record_kinds(dir_b) == ["opening", "work"], record_kinds(dir_b)
         print(f"      peer A: 10 -> {bal_a} (debited), peer B: 10 -> {bal_b} (credited)")
 
-        if REAL_MODE:
-            # The kill must land while the job is still running, which a real
-            # LLM call cannot guarantee — restart peer B (same identity and
-            # ledger) in simulate mode with a known 3s execution time.
-            print("[5/6] restarting peer B in simulate mode, then killing it mid-job")
-            peer_b.terminate()
-            peer_b.wait(timeout=10)
-            peer_b, log_b = start_peer("peer-b-sim", dir_b, TCP_PORT_B, simulate=True)
-            procs.append(peer_b)
-            logs.append(log_b)
-            wait_for_peer(dir_b, 1)
-            wait_for_peer(dir_a, 1)
-        else:
-            print("[5/6] delegating again and killing peer B mid-job")
+        # The kill must land while the job is still running, which a real
+        # LLM call cannot guarantee — restart peer B (same identity and
+        # ledger) with a canned 3s execution time for the crash test.
+        print("[5/6] restarting peer B with a fixed 3s canned job, then killing it mid-job")
+        peer_b.terminate()
+        peer_b.wait(timeout=10)
+        peer_b, log_b = start_peer("peer-b-sim", dir_b, TCP_PORT_B, simulate=True)
+        procs.append(peer_b)
+        logs.append(log_b)
+        wait_for_peer(dir_b, 1)
+        wait_for_peer(dir_a, 1)
         delegate2 = subprocess.Popen(
             mesh(dir_a, "delegate", "sum the first 100 primes", "--harness", "any",
                  "--max-runtime", "30", "--json"),
