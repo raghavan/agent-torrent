@@ -23,6 +23,16 @@ NOT defended — known, accepted gaps in the prototype:
 - **Sybil resistance**: fresh identities start with fresh credits; the
   ledger is local and unaudited.
 
+## Terms of service
+
+AgentTorrent can drive the `claude` and `codex` CLIs. A worker seeding a
+CLI harness executes **other peers' tasks on its own account** — whether
+your provider's terms allow that is between you and your provider
+(account-sharing and resale clauses vary). Read your provider's terms of
+service before advertising a CLI harness to the swarm. The `api` harness
+(a local LLM server you run yourself) raises no such question and is the
+reference path used in CI.
+
 ## Reporting a vulnerability
 
 For anything beyond the accepted gaps above (e.g. a sandbox escape, a
