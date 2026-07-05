@@ -1,38 +1,46 @@
 # What if coding agents worked like BitTorrent?
 
-*A peer-to-peer mesh where machines swap idle AI subscription capacity. Here's the idea — and a working prototype.*
+*A peer-to-peer mesh where machines swap idle AI subscription capacity.
+This post is about the idea and the economics; the working prototype and
+all the technical detail live on
+[GitHub](https://github.com/raghavan/agent-torrent).*
 
 Your coding agent subscription is idle right now. Probably.
 
 If you pay for Claude Code Max, a Codex plan, or Cursor, think about the
 duty cycle. The subscription sleeps when you sleep. It idles through your
 meetings, your commute, your weekends. Generously, you're extracting value
-from it a few hours a day. The rest of the time, a seat on some of the most
-expensive compute ever assembled sits unused.
+from it a few hours a day. Call it four hours of real use out of
+twenty-four — a 15% duty cycle on a seat that costs real money, attached
+to some of the most expensive compute ever assembled.
 
 Meanwhile, at this exact moment, someone eleven time zones away is staring
 at a rate-limit message in the middle of their workday, waiting for their
 quota to reset.
 
-We have seen this shape of problem before. In the early 2000s, the resource
-was bandwidth: everyone had upload capacity sitting idle while everyone
-wanted download capacity in bursts. BitTorrent's insight was not really
-about piracy. It was that a swarm of peers with idle capacity and bursty
-demand could outperform any central server — no coordinator anywhere, held
-together by nothing but a tit-for-tat incentive that keeps freeloaders out.
+Notice what those two facts are, together: idle supply here, unmet demand
+there, and the sun guarantees the mismatch. Your midnight is someone's
+2 p.m. The capacity and the need are never in the same place at the same
+time — which is exactly the condition under which markets exist.
+
+We have seen this shape of problem before. In the early 2000s, the
+resource was bandwidth: everyone had upload capacity sitting idle while
+everyone wanted download capacity in bursts. BitTorrent's insight was not
+really about piracy. It was that a swarm of peers with idle capacity and
+bursty demand could outperform any central server — no coordinator
+anywhere, held together by nothing but a tit-for-tat incentive that keeps
+freeloaders out.
 
 I've been wondering what that looks like for frontier-model access. So I
 built a prototype to find out:
 [AgentTorrent](https://github.com/raghavan/agent-torrent).
 
-> **Before we go further.** This is a research prototype, built to make a
-> design space visible — not a service to run on an open network. Read
+> **Before we go further.** This is a research prototype built to explore
+> a design space, not a service. If you're tempted to run it, read the
+> project's
 > [SECURITY.md](https://github.com/raghavan/agent-torrent/blob/main/SECURITY.md)
-> before running it anywhere you care about. And one thing to be direct
-> about up front: if you seed a CLI harness like `claude` or `codex`, you
-> are executing strangers' tasks **on your own account** — read your
-> provider's terms of service first. Both of these get their own sections
-> below, because they're the interesting part.
+> first — including the part about your provider's terms of service, which
+> gets its own section below because it's genuinely interesting.
 
 ## The analogy, made precise
 
@@ -41,243 +49,185 @@ content from others), and the choking algorithm rewards peers who
 reciprocate.
 
 In a capacity mesh, seeding is accepting delegated tasks. Your machine
-advertises "I have Claude Code 2.x installed, I accept jobs up to 300
-seconds" and runs strangers' tasks while you're not using it. A harness you
-don't subscribe to becomes one you can borrow: hand a task manifest to a
-peer, get the result back. Leeching is delegating. Every delegation costs
-the requester one credit and earns the worker one, and a peer with a zero
+advertises "I have a coding agent installed, I accept jobs up to five
+minutes" and runs strangers' tasks while you're not using it. Leeching is
+delegating: a harness you don't subscribe to becomes one you can borrow —
+hand a task to a peer, get the result back. Every delegation costs the
+requester one credit and earns the worker one, and a peer with a zero
 balance can't delegate at all.
 
 **Run out of credits? Do some seeding.**
 
-That last rule is the whole incentive layer — the mesh's version of
-tit-for-tat. There's no reputation system, no staking, no token (a promise
-I'll repeat later, loudly). Just: you can only take out what someone was
+That one rule is the entire incentive layer. No reputation scores, no
+staking, no token (a promise I'll repeat later, loudly). Just BitTorrent's
+old bargain, restated for compute: you can only take out what someone was
 willing to put in, and the only way to top up is to be useful to a
 stranger.
 
-## The skeleton
+The prototype makes the rest of the analogy literal — peer identities work
+like torrent node ids, there's no tracker and no server role, and a peer
+can be killed and restarted and relearn the swarm from gossip. If you want
+the protocol, the sandbox model, and the message flow, it's all in the
+[repo](https://github.com/raghavan/agent-torrent); this post stays on the
+economics.
 
-The rest of the BitTorrent skeleton translates almost directly. A peer id
-is the SHA-1 hash of an Ed25519 public key, exactly like a DHT
-(distributed hash table) node id. There is no tracker: peers find each
-other by UDP broadcast on the local network, plus a bootstrap list for
-peers across the internet. Every peer runs identical code — there is no
-server role anywhere. And all swarm state is rebuildable from gossip: kill
-a peer, wipe its peer table, restart it, and it relearns the swarm within
-one beacon interval.
+## Escrow, or: how to pay a stranger who might vanish
 
-The prototype is ~2,500 lines of Python (standard library plus PyNaCl for
-signatures), organized around five invariants that I treated as law while
-building it:
+The interesting economic object in the prototype isn't the credit — it's
+the escrow.
 
-1. **No server role.** A peer functions identically as requester and
-   worker — one codebase, one process.
-2. **No central coordinator.** Discovery is UDP broadcast (a signed beacon
-   every 5 seconds; peers expire after 30), plus optional bootstrap peers
-   for crossing networks.
-3. **Every message is a signed JSON envelope.** Signatures are verified
-   before any message is processed. This includes the CLI talking to its
-   own local peer.
-4. **Workers never execute outside their sandbox.** The execution
-   subprocess gets a fresh temp workdir, a hard timeout from the job
-   manifest, and a from-scratch environment. Task text cannot widen the
-   sandbox — the only thing that reaches the harness's environment is an
-   explicit allowlist in the *worker's own* config.
-5. **Swarm state is rebuildable from gossip.** The peer table is a pure
-   cache of received beacons; losing local state and restarting is safe.
+When you delegate, your credit doesn't go to the worker. It goes into
+escrow at the moment of the offer, is released to the worker when a good
+result comes back, and is refunded to you if the job is rejected, fails,
+or times out. The prototype's acceptance test literally kills a worker
+mid-job to prove the requester gets its credit back.
 
-## One delegation, end to end
+This matters because a mesh of strangers has no recourse. There's no
+platform to appeal to, no chargeback, no support ticket. The payment
+mechanism itself has to make failure boring: worker dies, you're refunded,
+you try another peer. Escrow-settle-refund is the smallest mechanism I
+could find that makes "pay a stranger for future work" safe when the
+stranger is a process on the internet that might not exist in ten seconds.
 
-Here is what the protocol does for one successful delegation:
+## The pricing is naive on purpose
 
-```
-Peer A (requester)                          Peer B (worker)
-   |   <- both broadcast signed UDP beacons every 5s ->   |
-   |--- TCP connect ---------------------------->|
-   |--- HANDSHAKE ------------------------------>|  verify sig + id
-   |<-- HANDSHAKE -------------------------------|  A verifies likewise
-   |  A escrows 1 credit                         |
-   |--- TASK_OFFER {job manifest} -------------->|  validate job, check harness
-   |<-- TASK_ACCEPT {job_id} --------------------|
-   |                                             |  execute in fresh sandbox,
-   |                                             |  empty env, hard timeout
-   |<-- TASK_RESULT {job_id, output} ------------|  B credits itself 1
-   |  A settles escrow to B, prints result       |
-```
+One credit per task. A five-second "reverse a string" costs the same as a
+five-minute refactor. This is obviously wrong, and it's wrong on purpose —
+flat pricing kept the mechanism small enough to get right before making it
+clever.
 
-And here is what it looks like from the requester's terminal. Peer B is
-seeding a local model (more on why local in a moment); peer A has no
-harness at all:
+But the placeholder points at real questions, and they're better than the
+placeholder:
 
-```console
-$ mesh peers
-PEER ID          ADDRESS                HARNESSES                      ACCEPTS  LAST SEEN
-7c19d2ab41f6…    192.168.1.42:9400      api (openai-chat-api/default)  True     1751673604
+**Should price scale with declared cost?** Every job carries a declared
+runtime and token budget. Pricing off those declarations is easy — but now
+requesters have an incentive to under-declare, and workers to reject
+anything suspicious. You've invented estimate haggling.
 
-$ mesh delegate "write a python function that reverses a string without slicing" --harness api
-job 4f0c81d2 completed by 7c19d2ab via api in 6s
---- result ---
-def reverse_string(s):
-    result = ""
-    for ch in s:
-        result = ch + result
-    return result
+**Should workers bid?** BitTorrent's optimistic unchoking has a market
+flavor — periodically give a freeloader free service, in case they turn
+out to reciprocate. A capacity mesh could run the same way: an idle swarm
+gets cheap, a busy swarm gets expensive, and price discovery happens
+peer-to-peer with no order book anywhere. The time-zone structure of the
+demand makes this genuinely interesting: the swarm's price should breathe
+with the sun, cheap where it's night, dear where it's afternoon.
 
-$ mesh ledger
-balance: 9 credits
-KIND     JOB        MEMO
-opening  -          opening balance
-escrow   4f0c81d2   escrow 1 credit for job offered to 7c19d2ab
-settle   4f0c81d2   paid 1 credit to worker 7c19d2ab
-```
+**Should reputation become yield?** A peer that has returned good results
+for months is worth more per credit than a fresh keypair. Let its asking
+price rise and reputation turns into income — which is exactly when people
+start faking reputation. Every one of these refinements interacts with the
+two hard problems below.
 
-Meanwhile on the worker:
+## The market for lemons
 
-```console
-$ mesh ledger
-balance: 11 credits
-KIND     JOB        MEMO
-opening  -          opening balance
-work     4f0c81d2   earned 1 credit from requester 3ba90e77
-```
+Here is the problem I now think dominates everything else, and it's a
+century-old one: information asymmetry.
 
-Both peers start at 10. After one job, 9 and 11 — one credit changed
-hands, recorded double-entry on both sides.
+A worker's result is, to the requester, just text. Nothing proves the
+worker actually ran the harness it advertised. A rational worker on a
+frontier-model mesh has an obvious arbitrage: accept jobs claiming a
+top-tier agent, run them on a cheap local model, pocket the difference.
+The requester can't tell high-quality capacity from low-quality capacity
+at the moment of purchase — and Akerlof told us in 1970 what happens next.
+Bad capacity drives out good. Sellers of genuine frontier access leave the
+market because they can't command a premium over the fakers, quality
+craters, and the mesh becomes a market for lemons.
 
-The failure path matters just as much, so the acceptance test exercises it
-directly: delegate a job, then kill the worker's process mid-execution.
-The requester must not crash, must report the failure cleanly, and must
-get its escrowed credit refunded — no money lost to a dead worker. Escrow
-at offer time, settle on result, refund on reject/failure/timeout: it's a
-tiny protocol, but it means the economics survive the network being a
-network.
+Every fix has a cost structure worth thinking about. Re-run each task on a
+second peer and compare? You've doubled the price of everything to buy
+verification. Spot-check workers with tasks whose answers you already
+know? Cheaper, but now workers profit by detecting audits. Attestation
+that a particular binary ran? Pushes trust into hardware vendors, which is
+a different centralization. My honest position: I don't have a good
+answer, and I notice that nobody building "decentralized AI" seems to have
+one either. This is the open problem I most want people to argue with me
+about.
 
-## What I deliberately didn't build
+## Printing money
 
-This is the section that would normally be fine print. I think it's the
-most interesting part, because each gap is an open problem that any real
-version of this idea has to solve.
+The second hard problem: fresh identities start with fresh credits. An
+identity is just a keypair, a keypair is free, and each one arrives with
+an opening balance. So the naive version of this economy has a money
+printer: generate a thousand identities, spend a thousand opening
+balances, contribute nothing.
 
-**Authorization: any keypair is a valid peer.** Identity in the mesh is
-just "can you sign with the key you claim" — there's no notion of *which*
-keys are allowed. If your ports are reachable, strangers can run jobs on
-your harness. The prototype's answer is "firewall it or run it inside a
-VPN," which is honest but not a solution. What does membership look like
-for a swarm with no central authority to issue it?
+This is the Sybil problem, and it's really a question about what scarcity
+backs the currency. BitTorrent dodged it elegantly — tit-for-tat was
+enforced *within each connection*, per swarm, in real time, so a fresh
+identity bought you nothing; you still had to upload right now to the
+specific peer you wanted downloads from. A capacity mesh can't fully copy
+that, because delegation is asymmetric: the peer with capacity to sell and
+the peer with work to offer are usually not the same pair at the same
+moment. That asymmetry is the whole point — and it's what forces the
+currency to exist and store value across time, which is what makes it
+counterfeitable.
 
-**Result integrity: a worker's result is unverified text.** Nothing proves
-the worker actually ran the requested harness — it could return garbage,
-or run your task on a much cheaper model than it advertised and pocket the
-difference. This is *the* hard problem of the whole design. How do you
-verify that a stranger genuinely ran your task on the harness they
-claimed? Re-run it on a second peer and compare? Spot-check with known
-tasks? Some attestation scheme? I don't know yet, and I notice nobody else
-seems to either.
-
-**Privacy: task text travels unencrypted and executes on someone else's
-machine.** No TLS, by design — the prototype keeps the interesting
-questions visible instead of burying them under transport plumbing. But
-even with encryption on the wire, the fundamental exposure remains: you
-are sending your prompt, and possibly your code, to a stranger's computer.
-Do not delegate confidential work. Which tasks are actually *safe* to
-delegate is its own design question.
-
-**Sybil resistance: fresh identities start with fresh credits.** Generate
-a new keypair, get 10 new credits. The ledger is local and unaudited —
-it's double-entry bookkeeping, not consensus. Any real economy on top of
-this needs an answer to "why can't I just make a thousand wallets?", and
-every known answer (proof of work, stake, web-of-trust, fees) changes the
-character of the system.
+The known escapes all change the system's character. Make identities
+costly (proof of work — wasteful). Make them staked (now you need the
+token I keep promising not to have). Make them vouched-for (web of trust —
+membership politics). Or give newcomers zero credits and force everyone to
+earn their way in by seeding first — the purest option, and maybe the
+right one: it converts the opening balance from a gift into a wage.
 
 ## The elephant in the room: terms of service
 
-Let's say it plainly: a worker seeding the `claude` or `codex` CLI is
+Let's say it plainly: a worker seeding a commercial coding-agent CLI is
 executing other people's tasks on its own subscription. Whether your
-provider's terms allow that is between you and your provider — account
-sharing and resale clauses vary, and "my machine ran it, but a stranger
-asked for it" is exactly the kind of question those clauses exist for.
-Read them before you seed a commercial harness. This is also spelled out
-in the repo's
-[SECURITY.md](https://github.com/raghavan/agent-torrent/blob/main/SECURITY.md).
+provider's terms allow that is between you and your provider —
+account-sharing and resale clauses vary, and "my machine ran it, but a
+stranger asked for it" is exactly the kind of question those clauses exist
+for. Read them before you seed a commercial harness; the repo's
+[SECURITY.md](https://github.com/raghavan/agent-torrent/blob/main/SECURITY.md)
+says the same.
 
-This is why the prototype's reference path is a **local model, not a cloud
-account**. The third harness, `api`, is one OpenAI-style chat-completions
-call to a local LLM server — llama.cpp, Ollama, vLLM, LM Studio — run
-inside the same sandbox as the CLIs. Seeding a model you run on your own
-hardware raises no ToS question at all, and it's enough to exercise every
-part of the design: discovery, signatures, escrow, sandboxing, failure
-recovery.
+There's an economic reading of this, too. The idle capacity in your
+subscription isn't accidental — flat-rate pricing *depends* on the duty
+cycle. A provider sells unlimited-feeling access at a fixed price because
+most seats idle most of the time; a mesh that pushes every seat toward
+100% utilization is adversarial to that pricing model, and providers will
+respond, contractually or technically. Any real capacity mesh has to
+either make peace with providers or run on capacity the participants
+actually own.
 
-It's also how the project tests itself. Every PR runs an end-to-end
-acceptance test in CI: two peers start on the runner, find each other over
-broadcast discovery, and one delegates a real task to the other, which
-executes it on llama.cpp serving Qwen2.5-0.5B on the runner's CPU. No
-cloud API, no credentials, and no simulated fallback — if the local-model
-path breaks, CI fails. That's the point. The mesh's viability shouldn't
-depend on anyone's subscription, including mine.
-
-## The economics are naive on purpose
-
-One credit per task. A 5-second "reverse a string" costs the same as a
-300-second refactor. This is obviously wrong, and it's wrong on purpose —
-flat pricing kept the escrow protocol small enough to get right before
-making it clever.
-
-The open questions are better than the placeholder: Should price scale
-with the job manifest's declared runtime and token budget? Should workers
-bid, BitTorrent-optimistic-unchoke style, so an idle swarm gets cheap and
-a busy one gets expensive? Should a peer's asking price rise with its
-track record, turning reputation into yield? Each of these interacts with
-the Sybil problem above — an auction is only as honest as the identities
-bidding in it.
+Which is why the prototype's reference path is a **local model, not a
+cloud account**. Peers can seed a model running on their own hardware —
+there's no ToS question when you own the weights and the machine — and the
+project's CI tests the entire pipeline end to end against a real local
+model with zero cloud credentials. The mesh's viability shouldn't depend
+on anyone's subscription, including mine. And it suggests where the idea
+is on solidest ground: not resold subscriptions, but a swarm of
+GPU-owning peers seeding capacity that is genuinely theirs to sell.
 
 ## There is no token
 
-The repo's stated non-goals: **no token, no DHT, no TLS, no GUI.**
+The project's stated non-goals include: **no token.**
 
-The first one deserves emphasis, because "peer-to-peer mesh with credits"
+It deserves emphasis, because "peer-to-peer mesh with credits"
 pattern-matches to a crypto pitch. It isn't one. The credits are integers
-in a local JSON file, worth nothing, transferable nowhere. They exist to
-answer exactly one design question — can tit-for-tat keep a capacity swarm
+in a local file, worth nothing, transferable nowhere. They exist to answer
+exactly one research question — can tit-for-tat keep a capacity swarm
 reciprocal, the way it kept BitTorrent swarms reciprocal? — and nothing
-kills an honest answer to that question faster than making the tokens
-worth money.
+kills an honest answer faster than making the tokens worth money. The
+moment credits have a dollar price, every open problem above stops being a
+design puzzle and becomes an attack with a payout.
 
-## Try it
+## Where this goes
 
-Two terminals, one machine, zero accounts:
-
-```sh
-git clone https://github.com/raghavan/agent-torrent && cd agent-torrent
-pip install -e .
-
-# terminal 1: serve a tiny local model (llama-server fetches it once, ~400 MB)
-llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:q4_k_m --port 8080
-
-# terminal 2: a worker peer backed by the local model
-AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 \
-mesh start --env-passthrough AGENTTORRENT_API_BASE_URL
-```
-
-Then delegate to it from a third terminal with `mesh delegate`, and watch
-`mesh ledger` on both sides. Everything above — the invariants, the
-message flow, the failure handling — is in the
-[repo](https://github.com/raghavan/agent-torrent), and issues and PRs are
-welcome. The contribution rules are short: the five invariants are law,
-the acceptance test must pass, and dependencies stay at stdlib + PyNaCl.
-If any of the open problems above — result verification especially —
-makes you want to argue, that's the contribution I most want.
+Everything mechanical — the protocol, the sandbox, the ledger, how to run
+two peers on your own machine against a free local model — is in the
+[GitHub repo](https://github.com/raghavan/agent-torrent), along with the
+contribution rules. If the market-for-lemons section made you want to
+argue, that's the contribution I most want.
 
 I don't know if a capacity mesh for coding agents becomes real
 infrastructure or stays a thought experiment. BitTorrent needed a
-particular alignment of idle supply, bursty demand, and a dead-simple
-incentive before it ate a third of the internet's traffic. Two of those
-three are already here: the subscriptions are idle, and the demand is
-bursty. Whether the incentive can be made to hold among strangers is the
-open question — and it's a lot more fun to poke at with a running
-prototype than a whiteboard.
+particular alignment before it ate a third of the internet's traffic: idle
+supply, bursty demand, and an incentive simple enough to hold among
+strangers. Two of the three are already here — the subscriptions are idle
+and the demand is bursty. The third is an open question with a working
+prototype attached, which is a much better kind of open question than the
+whiteboard kind.
 
 The person eleven time zones away is still staring at that rate-limit
-message. Somewhere, a seat is idle. The interesting engineering is in
+message. Somewhere, a seat is idle. The interesting economics is in
 between.
