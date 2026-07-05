@@ -177,34 +177,43 @@ to others.
 ## Acceptance test
 
 ```sh
-python3 acceptance_test.py
-```
-
-Starts two peers on one machine (different TCP ports, shared broadcast
-discovery port), delegates the reverse-a-string task from A to B, checks
-the result and the one-credit ledger transfer (A: 10→9, B: 10→11), then
-kills B mid-job and confirms A fails gracefully and is refunded.
-
-If `AGENTTORRENT_API_BASE_URL` is set, peer B executes the task **for
-real** through the `api` harness against the local LLM server at that
-URL — the test asserts the result is genuine LLM output (not the canned
-simulation) and actually contains a function definition. Without it,
-execution falls back to simulated. Set
-`AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to force simulation even when a
-server is configured.
-
-CI runs the acceptance test on every PR **against a local model only** —
-peer B executes the task on llama.cpp serving Qwen2.5-0.5B-Instruct on
-the runner's CPU, across Python 3.11 and 3.12. No cloud API is ever
-called in CI, and no credentials are involved.
-
-To run the real path yourself (zero cost, no account), start a llama.cpp
-server as shown in [Local LLM](#local-llm-no-cloud-account-needed) and
-run:
-
-```sh
+# start a local model first (see the Local LLM section), then:
 AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py
 ```
+
+The acceptance test **always runs against a real local model** — there
+is no simulated fallback. If `AGENTTORRENT_API_BASE_URL` is missing or
+the local-model path is broken, the test fails; that is the point.
+Start a llama.cpp server as shown in
+[Local LLM](#local-llm-no-cloud-account-needed) first (zero cost, no
+account).
+
+Think of the test as a short play between two people sharing one
+machine:
+
+1. **Two peers start up** — peer A and peer B, like two people running
+   AgentTorrent — and find each other over broadcast discovery exactly
+   as they would on a real network.
+2. **A hires B.** A asks for "a python function that reverses a string
+   without slicing" and puts 1 credit in escrow, like a deposit. B
+   accepts, asks the local model from inside its sandbox, and sends the
+   answer back.
+3. **The answer must be real.** The test asserts the result is genuine
+   LLM output — not a canned placeholder — and actually contains a
+   function definition.
+4. **The money must balance.** A's ledger shows 10 → 9 and B's shows
+   10 → 11: exactly one credit changed hands, recorded on both sides.
+5. **Then a worker dies on the job.** A hires B again and the test
+   kills B's process mid-job. A must not crash, must report the failure
+   cleanly, and must get its escrowed credit refunded — ending back at
+   9 credits, no money lost to a dead worker. (For this step peer B is
+   restarted with a fixed 3-second canned job so the kill reliably
+   lands mid-execution — a live LLM call can't guarantee that timing.)
+
+CI runs exactly this on every PR: llama.cpp serving
+Qwen2.5-0.5B-Instruct on the runner's CPU, across Python 3.11 and 3.12.
+No cloud API, no credentials — and if the local-model path doesn't
+work, CI fails.
 
 ## Contributing
 
