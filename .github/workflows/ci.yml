@@ -86,11 +86,7 @@ jobs:
           exit 1
       - name: Run acceptance test (peer B executes on the local LLM)
         env:
-          # Placeholder key — llama-server doesn't check auth; its presence is
-          # what makes the worker advertise the `api` harness.
-          ANTHROPIC_API_KEY: local
-          ANTHROPIC_BASE_URL: http://127.0.0.1:8080
-          AGENTTORRENT_API_FLAVOR: openai
+          AGENTTORRENT_API_BASE_URL: http://127.0.0.1:8080
         run: python acceptance_test.py
       - name: Dump llama-server log on failure
         if: failure()

@@ -4,10 +4,11 @@
 Scenario (run on one machine, real UDP broadcast discovery, real TCP):
 
 1. Start peer A and peer B on different TCP ports sharing one UDP
-   discovery port. If ``ANTHROPIC_API_KEY`` is set, peer B runs with
-   real execution via the ``api`` harness (a live LLM call); otherwise
-   both peers are forced to simulated execution so the test needs no
-   credentials (this is what CI runs).
+   discovery port. If ``AGENTTORRENT_API_BASE_URL`` is set, peer B runs
+   with real execution via the ``api`` harness — a live call to the
+   local LLM server at that URL (this is what CI runs, against
+   llama.cpp). Otherwise both peers are forced to simulated execution
+   so the test needs no model at all.
 2. Peer A delegates "write a python function that reverses a string
    without slicing". Peer B accepts, executes in its sandbox, returns
    the result. A prints the result; in real mode the result must be
@@ -21,13 +22,11 @@ Scenario (run on one machine, real UDP broadcast discovery, real TCP):
    simulate mode first) so the kill lands mid-job deterministically.
 
 Set ``AGENTTORRENT_ACCEPTANCE_SIMULATE=1`` to force simulation even
-when an API key is present. ``ANTHROPIC_BASE_URL``,
-``AGENTTORRENT_API_FLAVOR``, and ``AGENTTORRENT_API_MODEL`` are
-forwarded to the worker's sandbox when set — so a local LLM server
-works too, e.g. with llama.cpp serving a small model on port 8080:
+when a base URL is present. ``AGENTTORRENT_API_MODEL`` and
+``AGENTTORRENT_API_KEY`` are forwarded to the worker's sandbox when
+set. E.g. with llama.cpp serving a small model on port 8080:
 
-    ANTHROPIC_API_KEY=local ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \\
-        AGENTTORRENT_API_FLAVOR=openai python3 acceptance_test.py
+    AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py
 
 Exits 0 on success, 1 on failure (with both peers' logs dumped).
 """
@@ -55,15 +54,16 @@ REAL_MAX_RUNTIME = 120  # a live LLM call needs more headroom than a canned repl
 
 TASK_TEXT = "write a python function that reverses a string without slicing"
 
-# Real execution whenever a key is present (opt out with the env var below).
-REAL_MODE = bool(os.environ.get("ANTHROPIC_API_KEY")) and (
+# Real execution whenever a local LLM server is configured (opt out with
+# the env var below).
+REAL_MODE = bool(os.environ.get("AGENTTORRENT_API_BASE_URL")) and (
     os.environ.get("AGENTTORRENT_ACCEPTANCE_SIMULATE") != "1"
 )
 # Env vars the worker copies into its execution sandbox in real mode.
 SANDBOX_ENV_VARS = [
     name
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "AGENTTORRENT_API_FLAVOR",
-                 "AGENTTORRENT_API_MODEL", "HTTPS_PROXY", "SSL_CERT_FILE")
+    for name in ("AGENTTORRENT_API_BASE_URL", "AGENTTORRENT_API_MODEL",
+                 "AGENTTORRENT_API_KEY", "HTTPS_PROXY", "SSL_CERT_FILE")
     if name in os.environ
 ]
 

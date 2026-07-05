@@ -152,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--max-runtime", type=int, default=None,
                          help="largest job runtime this peer will accept (default 300)")
     p_start.add_argument("--env-passthrough", action="append", metavar="VAR",
-                         help="env var to copy into the execution sandbox, e.g. ANTHROPIC_API_KEY "
+                         help="env var to copy into the execution sandbox, e.g. AGENTTORRENT_API_BASE_URL "
                               "(repeatable; default: none)")
     p_start.set_defaults(func=cmd_start)
 

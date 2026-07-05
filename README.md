@@ -56,7 +56,7 @@ Python 3.11+, standard library plus
 | `protocol.py` | TCP JSON-line protocol: `HANDSHAKE`, `TASK_OFFER`, `TASK_ACCEPT`, `TASK_REJECT`, `TASK_RESULT` |
 | `job.py` | job manifest schema — all fields required, no defaults |
 | `executor.py` | sandboxed harness invocation, simulated when no harness is available |
-| `api_harness.py` | the `api` harness: one direct Anthropic Messages API call, run inside the sandbox |
+| `api_harness.py` | the `api` harness: one OpenAI-style chat-completions call to a local LLM server, run inside the sandbox |
 | `ledger.py` | plain-JSON double-entry credit ledger (both peers start at 10) |
 | `peer.py` | the peer process: worker + requester + local control channel |
 | `cli.py` | `mesh start`, `mesh peers`, `mesh delegate`, `mesh ledger` |
@@ -133,13 +133,12 @@ so reachable ports mean strangers can run jobs on your harness.
 ## Real execution vs simulation
 
 Three harnesses are supported: the `claude` and `codex` CLIs (detected on
-PATH), and `api` — a direct LLM API call (stdlib `urllib`, no SDK)
-advertised whenever the worker's environment has an `ANTHROPIC_API_KEY`.
-The `api` harness runs as a subprocess inside the same sandbox as the
-CLIs and speaks two wire formats: the Anthropic Messages API (default)
-and, with `AGENTTORRENT_API_FLAVOR=openai`, OpenAI-style chat
-completions — which is what local LLM servers speak. Override the model
-with `AGENTTORRENT_API_MODEL` and the endpoint with `ANTHROPIC_BASE_URL`.
+PATH), and `api` — a direct call to a **local LLM server** (stdlib
+`urllib`, no SDK), advertised whenever the worker's environment has an
+`AGENTTORRENT_API_BASE_URL`. The `api` harness runs as a subprocess
+inside the same sandbox as the CLIs and speaks OpenAI-style chat
+completions — the wire format local LLM servers speak. Override the
+model with `AGENTTORRENT_API_MODEL`.
 
 ### Local LLM (no cloud account needed)
 
@@ -152,35 +151,28 @@ model that runs fine on CPU:
 llama-server -hf Qwen/Qwen2.5-0.5B-Instruct-GGUF:q4_k_m --port 8080
 
 # terminal 2: a worker peer backed by the local model
-ANTHROPIC_API_KEY=local ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
-AGENTTORRENT_API_FLAVOR=openai \
-mesh start --env-passthrough ANTHROPIC_API_KEY \
-           --env-passthrough ANTHROPIC_BASE_URL \
-           --env-passthrough AGENTTORRENT_API_FLAVOR
+AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 \
+mesh start --env-passthrough AGENTTORRENT_API_BASE_URL
 ```
 
-(`ANTHROPIC_API_KEY` can be any placeholder — local servers don't check
-it, but the worker uses its presence to advertise the `api` harness.)
 With Ollama instead: `ollama serve` + `ollama pull qwen2.5:0.5b`, then
-`ANTHROPIC_BASE_URL=http://127.0.0.1:11434` and
-`AGENTTORRENT_API_MODEL=qwen2.5:0.5b`.
+`AGENTTORRENT_API_BASE_URL=http://127.0.0.1:11434` and
+`AGENTTORRENT_API_MODEL=qwen2.5:0.5b` (also passed through with
+`--env-passthrough AGENTTORRENT_API_MODEL`).
 
 If a worker has no harness at all (or runs with `--force-simulate`), it
 returns a canned simulated response — the full protocol, ledger, and
 sandbox path work with zero credentials.
 
-For real execution, the sandbox's from-scratch environment means the
-harness has no credentials by default. Allowlist exactly what it needs,
-on the worker only:
-
-```sh
-ANTHROPIC_API_KEY=sk-... mesh start --env-passthrough ANTHROPIC_API_KEY
-```
-
-The allowlist lives in the worker's own config and is never influenced by
-the job — task text cannot widen the sandbox. Note that a worker executes
-tasks on its own account: understand your provider's terms of service
-before seeding capacity to others.
+For real execution, the sandbox's from-scratch environment means a
+harness sees nothing by default. Allowlist exactly what it needs, on the
+worker only — for the `api` harness that is `AGENTTORRENT_API_BASE_URL`
+(as shown above); for a CLI harness, whatever auth variables that CLI
+reads. The allowlist lives in the worker's own config and is never
+influenced by the job — task text cannot widen the sandbox. Note that a
+worker seeding a CLI harness executes tasks on its own account:
+understand your provider's terms of service before seeding that capacity
+to others.
 
 ## Acceptance test
 
@@ -193,27 +185,25 @@ discovery port), delegates the reverse-a-string task from A to B, checks
 the result and the one-credit ledger transfer (A: 10→9, B: 10→11), then
 kills B mid-job and confirms A fails gracefully and is refunded.
 
-If `ANTHROPIC_API_KEY` is set, peer B executes the task **for real**
-through the `api` harness — the test asserts the result is genuine LLM
-output (not the canned simulation) and actually contains a function
-definition. Without a key it falls back to simulated execution. Set
-`AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to force simulation even when a key
-is present. Note the real path spends a small amount of API credit per
-run and executes on your account.
+If `AGENTTORRENT_API_BASE_URL` is set, peer B executes the task **for
+real** through the `api` harness against the local LLM server at that
+URL — the test asserts the result is genuine LLM output (not the canned
+simulation) and actually contains a function definition. Without it,
+execution falls back to simulated. Set
+`AGENTTORRENT_ACCEPTANCE_SIMULATE=1` to force simulation even when a
+server is configured.
 
 CI runs the acceptance test on every PR **against a local model only** —
 peer B executes the task on llama.cpp serving Qwen2.5-0.5B-Instruct on
-the runner's CPU, across Python 3.11 and 3.12. No Anthropic (or any
-cloud) API is ever called in CI; the `ANTHROPIC_API_KEY` the job sets is
-a placeholder that makes the worker advertise the `api` harness.
+the runner's CPU, across Python 3.11 and 3.12. No cloud API is ever
+called in CI, and no credentials are involved.
 
-To run the real path against a **local model** instead (zero cost, no
-account), start a llama.cpp server as shown in
-[Local LLM](#local-llm-no-cloud-account-needed) and run:
+To run the real path yourself (zero cost, no account), start a llama.cpp
+server as shown in [Local LLM](#local-llm-no-cloud-account-needed) and
+run:
 
 ```sh
-ANTHROPIC_API_KEY=local ANTHROPIC_BASE_URL=http://127.0.0.1:8080 \
-AGENTTORRENT_API_FLAVOR=openai python3 acceptance_test.py
+AGENTTORRENT_API_BASE_URL=http://127.0.0.1:8080 python3 acceptance_test.py
 ```
 
 ## Contributing

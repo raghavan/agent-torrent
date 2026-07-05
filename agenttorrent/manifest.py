@@ -7,8 +7,8 @@ from gossip).
 
 Fields: ``peer_id``, ``harnesses`` (mapping of harness name to version
 string — the ``claude`` and ``codex`` CLIs detected by probing PATH,
-plus ``api`` when the peer's environment has an ``ANTHROPIC_API_KEY``),
-``max_runtime_seconds``, ``accepts_tasks``.
+plus ``api`` when ``AGENTTORRENT_API_BASE_URL`` points at a local
+OpenAI-compatible LLM server), ``max_runtime_seconds``, ``accepts_tasks``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import os
 import shutil
 import subprocess
 
-from .api_harness import DEFAULT_MODEL, DEFAULT_OPENAI_MODEL
+from .api_harness import DEFAULT_MODEL
 
 log = logging.getLogger("agenttorrent.manifest")
 
@@ -57,12 +57,9 @@ def detect_harnesses() -> dict[str, str]:
             log.info("detected harness %s (%s)", name, version)
         else:
             log.warning("harness %s at %s exited %d on --version", name, path, proc.returncode)
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        if os.environ.get("AGENTTORRENT_API_FLAVOR", "anthropic") == "openai":
-            wire, model = "openai-chat-api", os.environ.get("AGENTTORRENT_API_MODEL", DEFAULT_OPENAI_MODEL)
-        else:
-            wire, model = "anthropic-messages-api", os.environ.get("AGENTTORRENT_API_MODEL", DEFAULT_MODEL)
-        found["api"] = f"{wire}/{model}"
+    if os.environ.get("AGENTTORRENT_API_BASE_URL"):
+        model = os.environ.get("AGENTTORRENT_API_MODEL", DEFAULT_MODEL)
+        found["api"] = f"openai-chat-api/{model}"
         log.info("detected harness api (%s)", found["api"])
     return found
 
