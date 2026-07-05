@@ -15,16 +15,16 @@ says:
   taken from the job.
 
 One deliberate, narrow exception: the worker's operator may allowlist
-specific environment variables (e.g. ``ANTHROPIC_API_KEY``) to pass
-into the sandbox so a real harness CLI can authenticate. The allowlist
-comes from the worker's own config — never from the job — so the
-invariant that nothing in the task text can widen the sandbox still
+specific environment variables (e.g. ``AGENTTORRENT_API_BASE_URL``) to
+pass into the sandbox so a real harness can reach its backend. The
+allowlist comes from the worker's own config — never from the job — so
+the invariant that nothing in the task text can widen the sandbox still
 holds.
 
 Three harnesses are supported: the ``claude`` and ``codex`` CLIs, and
-``api`` — a direct Anthropic Messages API call (``api_harness.py``, run
-as a subprocess in the same sandbox) for workers that have an
-``ANTHROPIC_API_KEY`` but no agent CLI installed.
+``api`` — one OpenAI-style chat-completions call to a local LLM server
+(``api_harness.py``, run as a subprocess in the same sandbox) for
+workers that serve a local model but have no agent CLI installed.
 
 If no harness is available, execution is simulated with a canned
 response so the protocol can be exercised without credentials.
